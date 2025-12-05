@@ -178,35 +178,47 @@ with st.sidebar:
     - Mann-Whitney U
     - Wilcoxon Signed-Rank
     - Sign Test
+    - Mood's Median Test
     
     **3. Comparing Proportions**
     - One-Proportion z-Test
     - Two-Proportion z-Test
     - Exact Binomial Test
-    - Confidence Intervals
+    - CI for Proportion
+    - CI for Difference
     
     **4. Categorical Analysis**
-    - Chi-Square Tests
+    - Chi-Square Independence
+    - Chi-Square Goodness of Fit
+    - Chi-Square Test for Trend
     - Fisher's Exact Test
     - McNemar's Test
+    - Cochran's Q Test
     - Cramér's V
     
     **5. ANOVA Family**
     - One-Way ANOVA
     - Two-Way ANOVA
+    - Repeated Measures ANOVA
+    - ANCOVA
     - Kruskal-Wallis
     - Friedman Test
-    - Post-Hoc Tests
+    - Tukey's HSD
+    - Bonferroni Correction
+    - Eta Squared (η²)
     
     **6. Correlation**
     - Pearson r
     - Spearman ρ
     - Kendall's τ
     
-    **7. Regression**
-    - Simple Linear
+    **7. Regression & Multivariate**
+    - Simple Linear Regression
     - Multiple Regression
     - Logistic Regression
+    - Multinomial Logistic
+    - K-Means Clustering
+    - PCA
     """)
     
     st.markdown("---")
