@@ -1190,7 +1190,7 @@ with tab2:
                 n_negative = np.sum(diff_nonzero < 0)
                 
                 # Two-tailed binomial test
-                p_value = stats.binom_test(min(n_positive, n_negative), n, 0.5, alternative='two-sided')
+                p_value = stats.binomtest(min(n_positive, n_negative), n, 0.5, alternative='two-sided').pvalue
                 reject = p_value < alpha
                 
                 decision_class = 'decision-reject' if reject else 'decision-fail'
@@ -1429,7 +1429,7 @@ with tab3:
             if x > n:
                 st.error("Successes cannot exceed sample size.")
             else:
-                p_value = stats.binom_test(x, n, p0, alternative=alternative)
+                p_value = stats.binomtest(x, n, p0, alternative=alternative).pvalue
                 reject = p_value < alpha
                 p_hat = x / n
                 
@@ -1548,8 +1548,8 @@ with tab3:
 with tab4:
     calc4 = st.selectbox(
         "Select Test:",
-        ["Chi-Square Test of Independence", "Chi-Square Goodness of Fit", 
-         "Fisher's Exact Test", "McNemar's Test", "Cramér's V (Effect Size)"],
+        ["Chi-Square Test of Independence", "Chi-Square Goodness of Fit", "Chi-Square Test for Trend",
+         "Fisher's Exact Test", "McNemar's Test", "Cochran's Q Test", "Cramér's V (Effect Size)"],
         key="calc4_select"
     )
     st.markdown("---")
@@ -1682,6 +1682,125 @@ with tab4:
                 </div>
                 """, unsafe_allow_html=True)
     
+    # ----- CHI-SQUARE TEST FOR TREND -----
+    elif calc4 == "Chi-Square Test for Trend":
+        st.markdown('<div class="section-header orange">Chi-Square Test for Trend (Cochran-Armitage)</div>', unsafe_allow_html=True)
+        
+        st.markdown("""
+        <div class="info-box">
+        <strong>Purpose:</strong> Tests for a linear trend in proportions across ordered categories.<br>
+        <strong>Use when:</strong> You have ordered groups (e.g., dose levels, age groups) and want to test if proportion increases/decreases linearly.<br>
+        <strong>H₀:</strong> No linear trend | <strong>Hₐ:</strong> Linear trend exists
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("**Enter data for ordered groups:**")
+        
+        num_groups = st.number_input("Number of Ordered Groups:", min_value=3, max_value=10, value=4, key="trend_groups")
+        
+        st.markdown("*Enter successes and totals for each ordered group:*")
+        
+        cols = st.columns(num_groups)
+        successes = []
+        totals = []
+        
+        default_successes = [5, 10, 15, 25, 30, 35, 40, 45, 50, 55]
+        default_totals = [50, 50, 50, 50, 50, 50, 50, 50, 50, 50]
+        
+        for i in range(num_groups):
+            with cols[i]:
+                st.markdown(f"**Group {i+1}**")
+                s = st.number_input(f"Successes:", min_value=0, value=default_successes[i], key=f"trend_s{i}")
+                n = st.number_input(f"Total n:", min_value=1, value=default_totals[i], key=f"trend_n{i}")
+                successes.append(s)
+                totals.append(n)
+        
+        score_type = st.selectbox("Group Scores:", ["Integer (1, 2, 3, ...)", "Custom"], key="trend_scores")
+        
+        if score_type == "Custom":
+            scores_text = st.text_input("Enter custom scores:", value=", ".join([str(i+1) for i in range(num_groups)]), key="trend_custom")
+            scores = [float(x.strip()) for x in scores_text.split(',')]
+        else:
+            scores = list(range(1, num_groups + 1))
+        
+        alpha = st.selectbox("Significance Level (α):", [0.01, 0.05, 0.10], index=1, key="trend_alpha")
+        
+        if st.button("Perform Test for Trend", type="primary", key="trend_btn"):
+            try:
+                successes = np.array(successes)
+                totals = np.array(totals)
+                failures = totals - successes
+                scores = np.array(scores)
+                
+                # Check validity
+                if any(successes > totals):
+                    st.error("Successes cannot exceed totals.")
+                else:
+                    # Calculate Cochran-Armitage test statistic
+                    N = np.sum(totals)
+                    p_bar = np.sum(successes) / N
+                    
+                    # Weighted mean of scores
+                    s_bar = np.sum(totals * scores) / N
+                    
+                    # Numerator: sum of (score - mean_score) * successes
+                    numerator = np.sum(scores * successes) - p_bar * np.sum(scores * totals)
+                    
+                    # Denominator
+                    denominator = np.sqrt(p_bar * (1 - p_bar) * (np.sum(totals * scores**2) - (np.sum(totals * scores)**2) / N))
+                    
+                    if denominator == 0:
+                        st.error("Cannot compute test statistic (no variation).")
+                    else:
+                        z_stat = numerator / denominator
+                        
+                        # Two-tailed p-value
+                        p_value = 2 * stats.norm.sf(abs(z_stat))
+                        
+                        # Chi-square version (z² ~ χ² with df=1)
+                        chi2_stat = z_stat ** 2
+                        p_value_chi2 = chi2_pvalue(chi2_stat, 1)
+                        
+                        reject = p_value < alpha
+                        
+                        # Calculate proportions
+                        proportions = successes / totals
+                        
+                        # Correlation between scores and proportions (effect size)
+                        r_trend = np.corrcoef(scores, proportions)[0, 1]
+                        
+                        decision_class = 'decision-reject' if reject else 'decision-fail'
+                        decision_text = '❌ REJECT H₀ — Significant linear trend exists' if reject else '✓ FAIL TO REJECT H₀ — No significant linear trend'
+                        
+                        st.markdown(f"""
+                        <div class="result-box">
+                            <div class="hypothesis-box">
+                                <strong>H₀:</strong> No linear trend in proportions (β = 0)<br>
+                                <strong>Hₐ:</strong> Linear trend exists (β ≠ 0)
+                            </div>
+                            <div class="result-value">
+                                z = {fmt(z_stat)}<br>
+                                χ² = {fmt(chi2_stat)} (df = 1)<br>
+                                P-value = {fmt(p_value)}
+                            </div>
+                            <div class="{decision_class}">
+                                {decision_text}
+                            </div>
+                            <div class="effect-size-box">
+                                <strong>Trend correlation:</strong> r = {fmt(r_trend, 4)}<br>
+                                <strong>Direction:</strong> {'Increasing' if z_stat > 0 else 'Decreasing'} trend
+                            </div>
+                            <div class="details-box">
+                                <strong>Group Proportions:</strong><br>
+                                {" → ".join([f"G{i+1}: {fmt(p*100, 1)}%" for i, p in enumerate(proportions)])}<br><br>
+                                <strong>Overall proportion:</strong> {fmt(p_bar*100, 2)}%
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+            except Exception as e:
+                st.error(f"Error: {str(e)}")
+    
     # ----- FISHER'S EXACT TEST -----
     elif calc4 == "Fisher's Exact Test":
         st.markdown('<div class="section-header orange">Fisher\'s Exact Test</div>', unsafe_allow_html=True)
@@ -1767,7 +1886,7 @@ with tab4:
             # Use exact test if discordant pairs are small
             if b + c < 25:
                 # Exact binomial test on discordant pairs
-                p_value = stats.binom_test(min(b, c), b + c, 0.5)
+                p_value = stats.binomtest(min(b, c), b + c, 0.5).pvalue
                 test_used = "Exact (binomial)"
                 stat = min(b, c)
             else:
@@ -1802,6 +1921,86 @@ with tab4:
                 </div>
             </div>
             """, unsafe_allow_html=True)
+    
+    # ----- COCHRAN'S Q TEST -----
+    elif calc4 == "Cochran's Q Test":
+        st.markdown('<div class="section-header orange">Cochran\'s Q Test</div>', unsafe_allow_html=True)
+        
+        st.markdown("""
+        <div class="info-box">
+        <strong>Purpose:</strong> Extension of McNemar's test to 3+ related samples.<br>
+        <strong>Use:</strong> Binary outcome measured across multiple conditions on same subjects.<br>
+        <strong>H₀:</strong> Proportions are equal across conditions | <strong>Hₐ:</strong> At least one differs
+        </div>
+        """, unsafe_allow_html=True)
+        
+        n_subjects = st.number_input("Number of Subjects:", min_value=3, value=10, key="cochran_n")
+        n_conditions = st.number_input("Number of Conditions:", min_value=3, max_value=10, value=3, key="cochran_k")
+        
+        st.markdown("**Enter binary data (0 or 1) for each subject × condition:**")
+        st.markdown("*Rows = Subjects, Columns = Conditions*")
+        
+        data_text = st.text_area("Data (CSV format):",
+                                  value="1,1,0\n1,0,0\n1,1,1\n0,1,0\n1,1,0\n1,0,0\n1,1,1\n0,0,0\n1,1,0\n1,1,1",
+                                  height=200, key="cochran_data")
+        alpha = st.selectbox("Significance Level (α):", [0.01, 0.05, 0.10], index=1, key="cochran_alpha")
+        
+        if st.button("Perform Cochran's Q Test", type="primary", key="cochran_btn"):
+            try:
+                lines = data_text.strip().split('\n')
+                data = []
+                for line in lines:
+                    row = [int(x.strip()) for x in line.split(',')]
+                    data.append(row)
+                data_array = np.array(data)
+                
+                n = data_array.shape[0]  # subjects
+                k = data_array.shape[1]  # conditions
+                
+                # Row totals (Li)
+                L = data_array.sum(axis=1)
+                # Column totals (Gj)
+                G = data_array.sum(axis=0)
+                
+                # Cochran's Q statistic
+                N = data_array.sum()
+                numerator = (k - 1) * (k * np.sum(G**2) - N**2)
+                denominator = k * N - np.sum(L**2)
+                
+                if denominator == 0:
+                    st.error("Cannot compute Q statistic (no variation in data)")
+                else:
+                    Q = numerator / denominator
+                    df = k - 1
+                    p_value = chi2_pvalue(Q, df)
+                    reject = p_value < alpha
+                    
+                    decision_class = 'decision-reject' if reject else 'decision-fail'
+                    decision_text = '❌ REJECT H₀ — Proportions differ across conditions' if reject else '✓ FAIL TO REJECT H₀ — No significant difference'
+                    
+                    st.markdown(f"""
+                    <div class="result-box">
+                        <div class="hypothesis-box">
+                            <strong>H₀:</strong> p₁ = p₂ = ... = pₖ (all proportions equal)<br>
+                            <strong>Hₐ:</strong> At least one proportion differs
+                        </div>
+                        <div class="result-value">
+                            Q = {fmt(Q)}<br>
+                            P-value = {fmt(p_value)}
+                        </div>
+                        <div class="{decision_class}">
+                            {decision_text}
+                        </div>
+                        <div class="details-box">
+                            <strong>n subjects:</strong> {n}<br>
+                            <strong>k conditions:</strong> {k}<br>
+                            <strong>df:</strong> {df}<br>
+                            <strong>Condition proportions:</strong> {[fmt(g/n, 3) for g in G]}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+            except Exception as e:
+                st.error(f"Error: {str(e)}")
     
     # ----- CRAMÉR'S V -----
     elif calc4 == "Cramér's V (Effect Size)":
@@ -1849,8 +2048,9 @@ with tab4:
 with tab5:
     calc5 = st.selectbox(
         "Select Test:",
-        ["One-Way ANOVA", "Kruskal-Wallis Test", "Tukey's HSD (Post-Hoc)", 
-         "Friedman Test", "Two-Way ANOVA"],
+        ["One-Way ANOVA", "Two-Way ANOVA", "Repeated Measures ANOVA", "ANCOVA",
+         "Kruskal-Wallis Test", "Friedman Test", "Tukey's HSD (Post-Hoc)", 
+         "Bonferroni Correction", "Eta Squared (η²)"],
         key="calc5_select"
     )
     st.markdown("---")
@@ -2227,6 +2427,299 @@ with tab5:
                                'Yes' if p_ab < alpha else 'No', '—']
             })
             st.dataframe(results_df, use_container_width=True, hide_index=True)
+    
+    # ----- REPEATED MEASURES ANOVA -----
+    elif calc5 == "Repeated Measures ANOVA":
+        st.markdown('<div class="section-header red">Repeated Measures ANOVA</div>', unsafe_allow_html=True)
+        
+        st.markdown("""
+        <div class="info-box">
+        <strong>Purpose:</strong> Compares means when same subjects are measured under 3+ conditions.<br>
+        <strong>H₀:</strong> All condition means are equal | <strong>Hₐ:</strong> At least one differs
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("**Enter data (rows = subjects, columns = conditions):**")
+        data_text = st.text_area("Data (CSV format):",
+                                  value="5,6,7\n4,5,8\n6,7,9\n5,6,7\n4,6,8\n5,7,9\n6,8,10\n4,5,7",
+                                  height=150, key="rm_data")
+        alpha = st.selectbox("Significance Level (α):", [0.01, 0.05, 0.10], index=1, key="rm_alpha")
+        
+        if st.button("Perform Repeated Measures ANOVA", type="primary", key="rm_btn"):
+            try:
+                lines = data_text.strip().split('\n')
+                data = []
+                for line in lines:
+                    row = [float(x.strip()) for x in line.split(',')]
+                    data.append(row)
+                data_array = np.array(data)
+                
+                n = data_array.shape[0]  # subjects
+                k = data_array.shape[1]  # conditions
+                
+                # Grand mean
+                grand_mean = np.mean(data_array)
+                
+                # Subject means
+                subject_means = np.mean(data_array, axis=1)
+                
+                # Condition means
+                condition_means = np.mean(data_array, axis=0)
+                
+                # Sum of squares
+                ss_total = np.sum((data_array - grand_mean)**2)
+                ss_subjects = k * np.sum((subject_means - grand_mean)**2)
+                ss_conditions = n * np.sum((condition_means - grand_mean)**2)
+                ss_error = ss_total - ss_subjects - ss_conditions
+                
+                # Degrees of freedom
+                df_subjects = n - 1
+                df_conditions = k - 1
+                df_error = (n - 1) * (k - 1)
+                
+                # Mean squares
+                ms_conditions = ss_conditions / df_conditions
+                ms_error = ss_error / df_error
+                
+                # F statistic
+                f_stat = ms_conditions / ms_error
+                p_value = f_pvalue(f_stat, df_conditions, df_error)
+                
+                # Effect size (partial eta squared)
+                partial_eta_sq = ss_conditions / (ss_conditions + ss_error)
+                
+                reject = p_value < alpha
+                decision_class = 'decision-reject' if reject else 'decision-fail'
+                decision_text = '❌ REJECT H₀ — Conditions differ significantly' if reject else '✓ FAIL TO REJECT H₀ — No significant difference'
+                
+                st.markdown(f"""
+                <div class="result-box">
+                    <div class="hypothesis-box">
+                        <strong>H₀:</strong> μ₁ = μ₂ = ... = μₖ (all condition means equal)<br>
+                        <strong>Hₐ:</strong> At least one condition mean differs
+                    </div>
+                    <div class="result-value">
+                        F = {fmt(f_stat)}<br>
+                        P-value = {fmt(p_value)}
+                    </div>
+                    <div class="{decision_class}">
+                        {decision_text}
+                    </div>
+                    <div class="effect-size-box">
+                        <strong>Partial η² = {fmt(partial_eta_sq, 4)}</strong> — {interpret_eta_squared(partial_eta_sq)} effect
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # ANOVA table
+                st.markdown("**ANOVA Table:**")
+                anova_df = pd.DataFrame({
+                    'Source': ['Subjects', 'Conditions', 'Error', 'Total'],
+                    'SS': [round(ss_subjects, 4), round(ss_conditions, 4), round(ss_error, 4), round(ss_total, 4)],
+                    'df': [df_subjects, df_conditions, df_error, n*k - 1],
+                    'MS': ['—', round(ms_conditions, 4), round(ms_error, 4), '—'],
+                    'F': ['—', round(f_stat, 4), '—', '—'],
+                    'P-value': ['—', fmt(p_value), '—', '—']
+                })
+                st.dataframe(anova_df, use_container_width=True, hide_index=True)
+                
+                # Condition means
+                st.markdown("**Condition Means:**")
+                cond_df = pd.DataFrame({
+                    'Condition': [f'Condition {i+1}' for i in range(k)],
+                    'Mean': [round(m, 4) for m in condition_means],
+                    'Std Dev': [round(np.std(data_array[:, i], ddof=1), 4) for i in range(k)]
+                })
+                st.dataframe(cond_df, use_container_width=True, hide_index=True)
+                
+            except Exception as e:
+                st.error(f"Error: {str(e)}")
+    
+    # ----- ANCOVA -----
+    elif calc5 == "ANCOVA":
+        st.markdown('<div class="section-header red">Analysis of Covariance (ANCOVA)</div>', unsafe_allow_html=True)
+        
+        st.markdown("""
+        <div class="info-box">
+        <strong>Purpose:</strong> Compares group means while controlling for a continuous covariate.<br>
+        <strong>H₀:</strong> Adjusted group means are equal | <strong>Hₐ:</strong> At least one adjusted mean differs
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("**Enter data in CSV format:**")
+        st.markdown("*Columns: Group (categorical), Covariate (continuous), DV (dependent variable)*")
+        
+        data_text = st.text_area("Data (CSV with headers):",
+                                  value="Group,Covariate,DV\nA,5,20\nA,7,24\nA,6,22\nA,8,26\nA,5,21\nB,6,28\nB,8,32\nB,7,30\nB,9,35\nB,6,29\nC,5,15\nC,7,19\nC,6,17\nC,8,22\nC,5,16",
+                                  height=200, key="ancova_data")
+        alpha = st.selectbox("Significance Level (α):", [0.01, 0.05, 0.10], index=1, key="ancova_alpha")
+        
+        if st.button("Perform ANCOVA", type="primary", key="ancova_btn"):
+            try:
+                import statsmodels.api as sm
+                from statsmodels.formula.api import ols
+                from statsmodels.stats.anova import anova_lm
+                
+                lines = data_text.strip().split('\n')
+                headers = [h.strip() for h in lines[0].split(',')]
+                data = []
+                for line in lines[1:]:
+                    parts = line.split(',')
+                    data.append([parts[0].strip(), float(parts[1].strip()), float(parts[2].strip())])
+                
+                df = pd.DataFrame(data, columns=headers)
+                
+                # Fit ANCOVA model
+                model = ols(f'{headers[2]} ~ C({headers[0]}) + {headers[1]}', data=df).fit()
+                anova_table = anova_lm(model, typ=2)
+                
+                # Get adjusted means
+                groups = df[headers[0]].unique()
+                covariate_mean = df[headers[1]].mean()
+                
+                st.markdown(f"""
+                <div class="result-box">
+                    <div class="result-value">
+                        ANCOVA Results<br>
+                        R² = {fmt(model.rsquared, 4)}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Display ANOVA table
+                st.markdown("**ANCOVA Table:**")
+                st.dataframe(anova_table.round(6), use_container_width=True)
+                
+                # Group analysis
+                group_p = anova_table.loc[f'C({headers[0]})', 'PR(>F)']
+                cov_p = anova_table.loc[headers[1], 'PR(>F)']
+                
+                st.markdown(f"""
+                <div class="details-box">
+                    <strong>Group Effect (adjusted for covariate):</strong><br>
+                    F = {fmt(anova_table.loc[f'C({headers[0]})', 'F'], 4)}, 
+                    p = {fmt(group_p)}<br>
+                    {'❌ Significant: Groups differ after controlling for covariate' if group_p < alpha else '✓ Not significant: No group differences after adjustment'}<br><br>
+                    <strong>Covariate Effect:</strong><br>
+                    F = {fmt(anova_table.loc[headers[1], 'F'], 4)}, 
+                    p = {fmt(cov_p)}<br>
+                    {'Covariate significantly predicts DV' if cov_p < alpha else 'Covariate does not significantly predict DV'}
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Group means
+                st.markdown("**Group Means:**")
+                unadj_means = df.groupby(headers[0])[headers[2]].mean()
+                st.markdown(f"*Unadjusted means:* {dict(unadj_means.round(4))}")
+                
+            except ImportError:
+                st.error("statsmodels is required. Install with: pip install statsmodels")
+            except Exception as e:
+                st.error(f"Error: {str(e)}")
+    
+    # ----- BONFERRONI CORRECTION -----
+    elif calc5 == "Bonferroni Correction":
+        st.markdown('<div class="section-header red">Bonferroni Correction</div>', unsafe_allow_html=True)
+        
+        st.markdown("""
+        <div class="info-box">
+        <strong>Purpose:</strong> Adjusts significance level for multiple comparisons to control family-wise error rate.<br>
+        <strong>Method:</strong> α_adjusted = α / m (where m = number of comparisons)
+        </div>
+        """, unsafe_allow_html=True)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            alpha = st.selectbox("Original α:", [0.01, 0.05, 0.10], index=1, key="bonf_alpha")
+            num_tests = st.number_input("Number of Comparisons (m):", min_value=1, max_value=100, value=3, key="bonf_m")
+        with col2:
+            p_values_text = st.text_area("P-values from comparisons (optional):",
+                                          value="0.02, 0.04, 0.001",
+                                          help="Enter p-values to check significance", key="bonf_pvals")
+        
+        if st.button("Calculate Bonferroni Correction", type="primary", key="bonf_btn"):
+            alpha_adj = alpha / num_tests
+            
+            st.markdown(f"""
+            <div class="result-box">
+                <div class="result-value">
+                    Adjusted α = {alpha} / {num_tests} = {fmt(alpha_adj, 6)}
+                </div>
+                <div class="details-box">
+                    <strong>Interpretation:</strong> Use α = {fmt(alpha_adj, 6)} for each individual test<br>
+                    to maintain overall family-wise error rate of {alpha}.<br><br>
+                    <strong>Note:</strong> Bonferroni is conservative. Consider Holm or FDR for many comparisons.
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Check p-values if provided
+            p_values = parse_data(p_values_text)
+            if len(p_values) > 0:
+                st.markdown("**P-value Assessment:**")
+                for i, p in enumerate(p_values):
+                    sig = "✓ Significant" if p < alpha_adj else "✗ Not significant"
+                    st.markdown(f"- Comparison {i+1}: p = {fmt(p, 6)} → {sig} (compared to {fmt(alpha_adj, 6)})")
+    
+    # ----- ETA SQUARED -----
+    elif calc5 == "Eta Squared (η²)":
+        st.markdown('<div class="section-header red">Eta Squared (η²) Effect Size Calculator</div>', unsafe_allow_html=True)
+        
+        st.markdown("""
+        <div class="info-box">
+        <strong>Purpose:</strong> Measures proportion of variance explained by group membership in ANOVA.<br>
+        <strong>Range:</strong> 0 to 1 (higher = stronger effect)
+        </div>
+        """, unsafe_allow_html=True)
+        
+        input_type = st.radio("Input Type:", ["SS values", "From ANOVA results"], horizontal=True, key="eta_input")
+        
+        if input_type == "SS values":
+            col1, col2 = st.columns(2)
+            with col1:
+                ss_between = st.number_input("SS Between (SSB):", min_value=0.0, value=150.0, format="%.4f", key="eta_ssb")
+            with col2:
+                ss_total = st.number_input("SS Total (SST):", min_value=0.01, value=500.0, format="%.4f", key="eta_sst")
+        else:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                f_val = st.number_input("F statistic:", min_value=0.0, value=5.0, format="%.4f", key="eta_f")
+            with col2:
+                df_between = st.number_input("df between:", min_value=1, value=2, key="eta_dfb")
+            with col3:
+                df_within = st.number_input("df within:", min_value=1, value=27, key="eta_dfw")
+        
+        if st.button("Calculate η²", type="primary", key="eta_btn"):
+            if input_type == "SS values":
+                eta_sq = ss_between / ss_total
+                # Calculate omega squared (less biased)
+                # Can't calculate without MS values from SS alone
+                omega_sq = None
+            else:
+                # η² = (df_b × F) / (df_b × F + df_w)
+                eta_sq = (df_between * f_val) / (df_between * f_val + df_within)
+                # ω² = (df_b × (F - 1)) / (df_b × F + df_w + 1)
+                omega_sq = (df_between * (f_val - 1)) / (df_between * f_val + df_within + 1)
+            
+            interpretation = interpret_eta_squared(eta_sq)
+            
+            st.markdown(f"""
+            <div class="result-box">
+                <div class="result-value">
+                    η² = {fmt(eta_sq, 6)}<br>
+                    <span style="font-size: 18px;">Interpretation: {interpretation} effect</span>
+                </div>
+                <div class="details-box">
+                    <strong>Variance Explained:</strong> {fmt(eta_sq * 100, 2)}% of total variance is explained by group membership<br><br>
+                    <strong>Guidelines:</strong><br>
+                    • η² < 0.01: Negligible<br>
+                    • η² = 0.01-0.06: Small<br>
+                    • η² = 0.06-0.14: Medium<br>
+                    • η² > 0.14: Large
+                    {f"<br><br><strong>Omega Squared (ω²):</strong> {fmt(omega_sq, 6)} (less biased estimate)" if omega_sq is not None else ""}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
 # ============================================================
 # TAB 6: CORRELATION
@@ -2416,7 +2909,8 @@ with tab6:
 with tab7:
     calc7 = st.selectbox(
         "Select Analysis:",
-        ["Simple Linear Regression", "Multiple Regression", "Logistic Regression"],
+        ["Simple Linear Regression", "Multiple Regression", "Logistic Regression", 
+         "Multinomial Logistic Regression", "K-Means Clustering", "Principal Component Analysis (PCA)"],
         key="calc7_select"
     )
     st.markdown("---")
@@ -2680,6 +3174,333 @@ with tab7:
                 
             except ImportError:
                 st.error("statsmodels is required. Install with: pip install statsmodels")
+            except Exception as e:
+                st.error(f"Error: {str(e)}")
+    
+    # ----- MULTINOMIAL LOGISTIC REGRESSION -----
+    elif calc7 == "Multinomial Logistic Regression":
+        st.markdown('<div class="section-header">Multinomial Logistic Regression</div>', unsafe_allow_html=True)
+        
+        st.markdown("""
+        <div class="info-box">
+        <strong>Purpose:</strong> Predicts categorical outcome with 3+ unordered categories.<br>
+        <strong>Use when:</strong> Dependent variable has multiple nominal categories (e.g., choice of product A, B, or C).<br>
+        <strong>Output:</strong> Relative Risk Ratios (RRR) comparing each category to reference.
+        </div>
+        """, unsafe_allow_html=True)
+        
+        data_text = st.text_area("Data (CSV format with headers, last column is categorical Y):",
+                                  value="X1,X2,Y\n1,2,A\n2,3,A\n3,2,A\n4,4,B\n5,3,B\n6,5,B\n7,4,C\n8,6,C\n9,5,C\n10,7,C\n2,3,A\n3,4,B\n5,5,B\n6,6,C\n7,7,C",
+                                  height=200, key="mlogit_data")
+        
+        if st.button("Perform Multinomial Logistic Regression", type="primary", key="mlogit_btn"):
+            try:
+                import statsmodels.api as sm
+                
+                lines = data_text.strip().split('\n')
+                headers = [h.strip() for h in lines[0].split(',')]
+                data = []
+                for line in lines[1:]:
+                    parts = line.split(',')
+                    row = [float(p.strip()) if i < len(parts)-1 else p.strip() for i, p in enumerate(parts)]
+                    data.append(row)
+                
+                df = pd.DataFrame(data, columns=headers)
+                
+                y_col = headers[-1]
+                x_cols = headers[:-1]
+                
+                # Get unique categories
+                categories = df[y_col].unique()
+                reference = categories[0]
+                
+                # Create dummy variables for Y
+                df['Y_code'] = pd.Categorical(df[y_col]).codes
+                
+                Y = df['Y_code']
+                X = df[x_cols].astype(float)
+                X = sm.add_constant(X)
+                
+                # Fit multinomial logit
+                model = sm.MNLogit(Y, X).fit(disp=0)
+                
+                st.markdown(f"""
+                <div class="result-box">
+                    <div class="result-value">
+                        Pseudo R² = {fmt(model.prsquared)}<br>
+                        Log-Likelihood = {fmt(model.llf)}
+                    </div>
+                    <div class="details-box">
+                        <strong>Categories:</strong> {list(categories)}<br>
+                        <strong>Reference Category:</strong> {reference}<br>
+                        <strong>LLR p-value:</strong> {fmt(model.llr_pvalue)}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Coefficients
+                st.markdown("**Coefficients (log-odds relative to reference):**")
+                
+                # Get parameter names and values
+                params_df = pd.DataFrame(model.params)
+                params_df.columns = [f'Category {c} vs {reference}' for c in categories[1:]]
+                params_df.index = ['const'] + x_cols
+                st.dataframe(params_df.round(4), use_container_width=True)
+                
+                # Relative Risk Ratios
+                st.markdown("**Relative Risk Ratios (RRR = exp(coef)):**")
+                rrr_df = np.exp(params_df)
+                st.dataframe(rrr_df.round(4), use_container_width=True)
+                
+                st.markdown("""
+                <div class="info-box">
+                <strong>RRR Interpretation:</strong><br>
+                RRR > 1: Higher predictor → higher relative risk of that category vs reference<br>
+                RRR < 1: Higher predictor → lower relative risk of that category vs reference<br>
+                RRR = 1: No effect on relative risk
+                </div>
+                """, unsafe_allow_html=True)
+                
+            except ImportError:
+                st.error("statsmodels is required. Install with: pip install statsmodels")
+            except Exception as e:
+                st.error(f"Error: {str(e)}")
+    
+    # ----- K-MEANS CLUSTERING -----
+    elif calc7 == "K-Means Clustering":
+        st.markdown('<div class="section-header">K-Means Clustering</div>', unsafe_allow_html=True)
+        
+        st.markdown("""
+        <div class="info-box">
+        <strong>Purpose:</strong> Partitions data into k clusters based on similarity (distance to centroids).<br>
+        <strong>Use when:</strong> You want to discover natural groupings in your data.<br>
+        <strong>Note:</strong> This is an unsupervised method — no hypothesis testing involved.
+        </div>
+        """, unsafe_allow_html=True)
+        
+        data_text = st.text_area("Data (CSV format with headers):",
+                                  value="X1,X2,X3\n1,2,3\n2,1,2\n1,1,2\n8,9,8\n9,8,9\n8,8,8\n5,5,5\n4,5,4\n5,4,5",
+                                  height=150, key="kmeans_data")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            k = st.number_input("Number of Clusters (k):", min_value=2, max_value=15, value=3, key="kmeans_k")
+            max_iter = st.number_input("Max Iterations:", min_value=10, max_value=1000, value=300, key="kmeans_iter")
+        with col2:
+            standardize = st.checkbox("Standardize features (recommended)", value=True, key="kmeans_std")
+            random_seed = st.number_input("Random Seed:", min_value=0, value=42, key="kmeans_seed")
+        
+        show_elbow = st.checkbox("Show Elbow Plot (find optimal k)", value=False, key="kmeans_elbow")
+        
+        if st.button("Perform K-Means Clustering", type="primary", key="kmeans_btn"):
+            try:
+                from sklearn.cluster import KMeans
+                from sklearn.metrics import silhouette_score
+                from sklearn.preprocessing import StandardScaler
+                
+                lines = data_text.strip().split('\n')
+                headers = [h.strip() for h in lines[0].split(',')]
+                data = []
+                for line in lines[1:]:
+                    row = [float(x.strip()) for x in line.split(',')]
+                    data.append(row)
+                
+                data_array = np.array(data)
+                n_samples, n_features = data_array.shape
+                
+                # Standardize if requested
+                if standardize:
+                    scaler = StandardScaler()
+                    data_scaled = scaler.fit_transform(data_array)
+                else:
+                    data_scaled = data_array
+                
+                # Fit K-Means
+                kmeans = KMeans(n_clusters=k, max_iter=max_iter, random_state=random_seed, n_init=10)
+                clusters = kmeans.fit_predict(data_scaled)
+                
+                # Calculate metrics
+                inertia = kmeans.inertia_  # Within-cluster sum of squares
+                
+                if k < n_samples and len(np.unique(clusters)) > 1:
+                    silhouette = silhouette_score(data_scaled, clusters)
+                else:
+                    silhouette = np.nan
+                
+                # Cluster sizes
+                unique, counts = np.unique(clusters, return_counts=True)
+                cluster_sizes = dict(zip(unique, counts))
+                
+                st.markdown(f"""
+                <div class="result-box">
+                    <div class="result-value">
+                        K-Means Clustering (k={k})<br>
+                        Silhouette Score = {fmt(silhouette, 4) if not np.isnan(silhouette) else 'N/A'}
+                    </div>
+                    <div class="effect-size-box">
+                        <strong>Inertia (WCSS):</strong> {fmt(inertia, 4)}<br>
+                        <strong>Silhouette:</strong> {fmt(silhouette, 4) if not np.isnan(silhouette) else 'N/A'} 
+                        {'(Good: > 0.5, Fair: 0.25-0.5, Poor: < 0.25)' if not np.isnan(silhouette) else ''}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Cluster assignments
+                st.markdown("**Cluster Assignments:**")
+                results_df = pd.DataFrame(data_array, columns=headers)
+                results_df['Cluster'] = clusters
+                st.dataframe(results_df, use_container_width=True, hide_index=True)
+                
+                # Cluster summary
+                st.markdown("**Cluster Summary:**")
+                cluster_summary = results_df.groupby('Cluster').agg(['mean', 'std', 'count'])
+                st.dataframe(cluster_summary.round(4), use_container_width=True)
+                
+                # Cluster centroids
+                st.markdown("**Cluster Centroids:**")
+                if standardize:
+                    centroids_original = scaler.inverse_transform(kmeans.cluster_centers_)
+                else:
+                    centroids_original = kmeans.cluster_centers_
+                centroids_df = pd.DataFrame(centroids_original, columns=headers)
+                centroids_df.index = [f'Cluster {i}' for i in range(k)]
+                centroids_df['Size'] = [cluster_sizes[i] for i in range(k)]
+                st.dataframe(centroids_df.round(4), use_container_width=True)
+                
+                # Elbow Plot
+                if show_elbow:
+                    st.markdown("**Elbow Plot (Optimal k Selection):**")
+                    max_k = min(10, n_samples - 1)
+                    inertias = []
+                    silhouettes = []
+                    k_range = range(2, max_k + 1)
+                    
+                    for k_test in k_range:
+                        km_test = KMeans(n_clusters=k_test, max_iter=max_iter, random_state=random_seed, n_init=10)
+                        km_test.fit(data_scaled)
+                        inertias.append(km_test.inertia_)
+                        if k_test < n_samples:
+                            silhouettes.append(silhouette_score(data_scaled, km_test.labels_))
+                        else:
+                            silhouettes.append(np.nan)
+                    
+                    elbow_df = pd.DataFrame({
+                        'k': list(k_range),
+                        'Inertia (WCSS)': inertias,
+                        'Silhouette Score': silhouettes
+                    })
+                    st.dataframe(elbow_df.round(4), use_container_width=True, hide_index=True)
+                    
+                    st.markdown("""
+                    <div class="info-box">
+                    <strong>How to choose k:</strong><br>
+                    • <strong>Elbow Method:</strong> Look for the "elbow" where inertia starts decreasing more slowly<br>
+                    • <strong>Silhouette:</strong> Choose k with highest silhouette score<br>
+                    • <strong>Domain knowledge:</strong> Consider what makes sense for your data
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+            except ImportError:
+                st.error("scikit-learn is required. Install with: pip install scikit-learn")
+            except Exception as e:
+                st.error(f"Error: {str(e)}")
+    
+    # ----- PCA -----
+    elif calc7 == "Principal Component Analysis (PCA)":
+        st.markdown('<div class="section-header">Principal Component Analysis (PCA)</div>', unsafe_allow_html=True)
+        
+        st.markdown("""
+        <div class="info-box">
+        <strong>Purpose:</strong> Dimension reduction technique. Identifies structure in correlated variables.<br>
+        <strong>Note:</strong> PCA is exploratory — not a hypothesis test.
+        </div>
+        """, unsafe_allow_html=True)
+        
+        data_text = st.text_area("Data (CSV format with headers):",
+                                  value="X1,X2,X3,X4\n1,2,3,4\n2,3,4,5\n3,4,5,6\n4,5,6,7\n5,6,7,8\n2,4,3,5\n3,5,4,6\n4,6,5,7\n5,7,6,8\n6,8,7,9",
+                                  height=200, key="pca_data")
+        
+        standardize = st.checkbox("Standardize data (recommended)", value=True, key="pca_std")
+        
+        if st.button("Perform PCA", type="primary", key="pca_btn"):
+            try:
+                lines = data_text.strip().split('\n')
+                headers = [h.strip() for h in lines[0].split(',')]
+                data = []
+                for line in lines[1:]:
+                    row = [float(x.strip()) for x in line.split(',')]
+                    data.append(row)
+                
+                data_array = np.array(data)
+                n, p = data_array.shape
+                
+                # Standardize if requested
+                if standardize:
+                    data_centered = (data_array - np.mean(data_array, axis=0)) / np.std(data_array, axis=0, ddof=1)
+                else:
+                    data_centered = data_array - np.mean(data_array, axis=0)
+                
+                # Covariance/Correlation matrix
+                cov_matrix = np.cov(data_centered, rowvar=False)
+                
+                # Eigenvalue decomposition
+                eigenvalues, eigenvectors = np.linalg.eigh(cov_matrix)
+                
+                # Sort by eigenvalue (descending)
+                idx = np.argsort(eigenvalues)[::-1]
+                eigenvalues = eigenvalues[idx]
+                eigenvectors = eigenvectors[:, idx]
+                
+                # Proportion of variance explained
+                total_var = np.sum(eigenvalues)
+                var_explained = eigenvalues / total_var
+                cumulative_var = np.cumsum(var_explained)
+                
+                # Determine number of components (Kaiser criterion: eigenvalue > 1 for standardized)
+                if standardize:
+                    n_components_kaiser = np.sum(eigenvalues > 1)
+                else:
+                    n_components_kaiser = np.sum(eigenvalues > np.mean(eigenvalues))
+                
+                st.markdown(f"""
+                <div class="result-box">
+                    <div class="result-value">
+                        {p} Principal Components<br>
+                        Kaiser Criterion suggests: {n_components_kaiser} components
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Eigenvalues table
+                st.markdown("**Eigenvalues & Variance Explained:**")
+                eigen_df = pd.DataFrame({
+                    'Component': [f'PC{i+1}' for i in range(p)],
+                    'Eigenvalue': [round(e, 4) for e in eigenvalues],
+                    'Variance %': [f"{v*100:.2f}%" for v in var_explained],
+                    'Cumulative %': [f"{c*100:.2f}%" for c in cumulative_var],
+                    'Keep (Kaiser)': ['Yes' if (standardize and e > 1) or (not standardize and e > np.mean(eigenvalues)) else 'No' for e in eigenvalues]
+                })
+                st.dataframe(eigen_df, use_container_width=True, hide_index=True)
+                
+                # Component loadings
+                st.markdown("**Component Loadings (Eigenvectors):**")
+                loadings_df = pd.DataFrame(
+                    eigenvectors,
+                    index=headers,
+                    columns=[f'PC{i+1}' for i in range(p)]
+                ).round(4)
+                st.dataframe(loadings_df, use_container_width=True)
+                
+                st.markdown("""
+                <div class="info-box">
+                <strong>Interpretation Guidelines:</strong><br>
+                • <strong>Kaiser Criterion:</strong> Keep components with eigenvalue > 1 (for standardized data)<br>
+                • <strong>Scree Plot:</strong> Look for "elbow" in eigenvalue plot<br>
+                • <strong>Variance Threshold:</strong> Keep enough components to explain 70-80% of variance<br>
+                • <strong>Loadings:</strong> Values > |0.4| indicate strong contribution to that component
+                </div>
+                """, unsafe_allow_html=True)
+                
             except Exception as e:
                 st.error(f"Error: {str(e)}")
 
